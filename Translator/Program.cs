@@ -67,51 +67,65 @@ namespace Translator
 
     class Program
     {
+        enum LanguageDelta { None, NewVoice, NewValue, NewItem };
+
         static int translatetimeout = 2000; //pause for translation, and to throttle our requests to the TTS server
         static int voicetimeout = 5000;
         static string accessToken;
+        //false: reload all translations and voice files
+        //true: only get the changes from the last build
+        static bool incrementalLoad = false;
+        static Dictionary<string, LanguageDelta> deltas = new Dictionary<string, LanguageDelta>();
+        public static Random Rand = new Random();
 
-        static readonly Dictionary<string, string> voices = new Dictionary<string, string>()
+        static readonly Dictionary<string, KeyValuePair<string, string>> voices = new Dictionary<string, KeyValuePair<string, string>>()
         {
-            {"en", "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)" },
-            {"es", "Microsoft Server Speech Text to Speech Voice (es-MX, HildaRUS)" },
-            {"fr", "Microsoft Server Speech Text to Speech Voice (fr-FR, HortenseRUS)" },
-            {"de", "Microsoft Server Speech Text to Speech Voice (de-DE, HeddaRUS)" },
-            {"ja", "Microsoft Server Speech Text to Speech Voice (ja-JP, HarukaRUS)" },
-            {"it", "Microsoft Server Speech Text to Speech Voice (it-IT, LuciaRUS)" },
-            {"ko", "Microsoft Server Speech Text to Speech Voice (ko-KR, HeamiRUS)" },
-            {"ru", "Microsoft Server Speech Text to Speech Voice (ru-RU, EkaterinaRUS)" },
-            {"zh-CN", "Microsoft Server Speech Text to Speech Voice (zh-CN, HuihuiRUS)" }
+            {"english", new KeyValuePair<string, string>("en-US", "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)") },
+            {"spanish", new KeyValuePair<string, string>("es", "Microsoft Server Speech Text to Speech Voice (es-MX, HildaRUS)") },
+            {"french", new KeyValuePair<string, string>("fr", "Microsoft Server Speech Text to Speech Voice (fr-FR, HortenseRUS)") },
+            {"german", new KeyValuePair<string, string>("de", "Microsoft Server Speech Text to Speech Voice (de-DE, HeddaRUS)") },
+            {"japanese", new KeyValuePair<string, string>("ja", "Microsoft Server Speech Text to Speech Voice (ja-JP, HarukaRUS)") },
+            {"italian", new KeyValuePair<string, string>("it", "Microsoft Server Speech Text to Speech Voice (it-IT, LuciaRUS)") },
+            {"korean", new KeyValuePair<string, string>("ko", "Microsoft Server Speech Text to Speech Voice (ko-KR, HeamiRUS)") },
+            {"russian", new KeyValuePair<string, string>("ru", "Microsoft Server Speech Text to Speech Voice (ru-RU, EkaterinaRUS)") },
+            {"chinese", new KeyValuePair<string, string>("zh-CN", "Microsoft Server Speech Text to Speech Voice (zh-CN, HuihuiRUS)") }
         };
 
         static async Task Main(string[] args)
         {
-            // If your resource isn't in WEST US, change the endpoint
+            //await UpdatePhrases("settings");
+            //return;
 
-            var jsonData = File.ReadAllText(@"C:\Users\tucke\source\biome\Cell Matching\Assets\Resources\Localization\english.json");
+            var jsonData = File.ReadAllText(@"english.json");
             var json = JsonConvert.DeserializeObject<Language>(jsonData);
+            CheckDeltas(json);
 
-            ////First get all the speech for English
-            //if (!Directory.Exists("english"))
-            //    Directory.CreateDirectory("english");
-            //int i = 0;
-            //foreach (var kv in json.strings)
-            //{
-            //    if (i%10 == 0)
-            //    {
-            //        var ret = await UpdateAccessCode((i / 10) % 2 == 0);
-            //        if (!ret) return;
-            //        i++;
-            //    }
-            //    Console.WriteLine(DateTime.Now.ToLongTimeString() + ": " + kv.value);
-            //    await GetSpeech("english", "en-US", kv.key, kv.value);
-            //    Thread.Sleep(timeout);
-            //    i++;
-            //}
-            //Console.WriteLine("done reading English");
+            //First get all the speech for English
+            if (!Directory.Exists("english"))
+                    Directory.CreateDirectory("english");
+            int i = 0;
+            foreach (var ld in json.strings)
+            {
+                if (i % 10 == 0)
+                {
+                    var ret = await UpdateAccessCode(i / 10);
+                    if (!ret) return;
+                    i++;
+                }
+                Console.WriteLine(DateTime.Now.ToLongTimeString() + ": " + ld.value);
+
+                if (ld.voice && deltas[ld.key] != LanguageDelta.None)
+                {
+                    await GetSpeech("english", "en-US", ld.key, ld.value);
+                    Thread.Sleep(voicetimeout);
+                }
+                i++;
+            }
+            Console.WriteLine("done reading English");
 
             var langs = new KeyValuePair<string, string>[]
             {
+                //new KeyValuePair<string, string>("english", "en-US"),
                 new KeyValuePair<string, string>("spanish", "es"),
                 new KeyValuePair<string, string>("french", "fr"),
                 new KeyValuePair<string, string>("german", "de"),
@@ -130,15 +144,34 @@ namespace Translator
                 await TranslateGoogle(l.Key, l.Value, json.strings);
         }
 
-        static async Task<bool> UpdateAccessCode(bool key1)
+        static void CheckDeltas(Language json)
+        {
+            var jsonProdData = File.ReadAllText(@"C:\Users\tucke\source\biome\Cell Matching\Assets\Resources\Localization\english.json");
+            var jsonProd = JsonConvert.DeserializeObject<Language>(jsonProdData);
+
+            foreach (var l in json.strings)
+            {
+                var p = jsonProd.strings.FirstOrDefault(s => s.key == l.key);
+                if (p == null || !incrementalLoad)
+                    deltas.Add(l.key, LanguageDelta.NewItem);
+                else if (p.value != l.value)
+                    deltas.Add(l.key, LanguageDelta.NewValue);
+                else if (p.voice && p.voice != l.voice)
+                    deltas.Add(l.key, LanguageDelta.NewVoice);
+                else
+                    deltas.Add(l.key, LanguageDelta.None);
+            }
+        }
+
+        static async Task<bool> UpdateAccessCode(int iKey)
         {
             // Add your subscription key here
-            var key1CognitiveServices = "6327355d74fc439183d2077070329328";
-            var key2CognitiveServices = "e94a19d9accd4de0805a19a3e3ffcdb4";
+            var keys = new string[] { "6327355d74fc439183d2077070329328", "e94a19d9accd4de0805a19a3e3ffcdb4",
+                        "a4ed819e8b0c48929eab1120a4ce507f", "aa9392cf3ee841e496d21154b15fdb86"};
 
             //Alternate between keys for each of the 10 requests
             var auth = new Authentication("https://westus.api.cognitive.microsoft.com/sts/v1.0/issueToken",
-                (key1 ? key1CognitiveServices : key2CognitiveServices));
+                keys[iKey % keys.Length]);
             try
             {
                 accessToken = await auth.FetchTokenAsync().ConfigureAwait(false);
@@ -151,6 +184,25 @@ namespace Translator
                 Console.WriteLine(ex.ToString());
                 Console.WriteLine(ex.Message);
                 return false;
+            }
+        }
+
+        static async Task UpdatePhrases(string key)
+        {
+            await UpdateAccessCode(Rand.Next(1000));
+
+            var langfiles = Directory.GetFiles(".").Where(f => Path.GetExtension(f) == ".json");
+            foreach (var lf in langfiles)
+            {
+                var jsonData = File.ReadAllText(lf);
+                var json = JsonConvert.DeserializeObject<Language>(jsonData);
+                var text = json.strings.Where(s => s.key == key).Select(s => s.value).First();
+                var langkey = Path.GetFileNameWithoutExtension(lf);
+                if (voices.ContainsKey(langkey))
+                {
+                    Console.WriteLine("Getting speech for " + langkey);
+                    await GetSpeech(langkey, voices[langkey].Key, key, text);
+                }
             }
         }
 
@@ -187,36 +239,45 @@ namespace Translator
                 {
                     if (i % 10 == 0)
                     {
-                        var ret = await UpdateAccessCode((i / 10) % 2 == 0);
+                        var ret = await UpdateAccessCode(i / 10);
                         if (!ret) return;
                         i++;
                     }
 
-                    inText.Click();
-                    clearContents.Perform();
-                    inText.SendKeys(lp.value);
-                    Thread.Sleep(translatetimeout);
                     var lpOut = new LanguageData();
-                    lpOut.key = lp.key;
-                    lpOut.value = lp.value;
-                    lpOut.voice = lp.voice;
-                    try
+                    if (deltas[lp.key] == LanguageDelta.NewValue || deltas[lp.key] == LanguageDelta.NewItem)
                     {
-                        //This element goes stale when new text is written
-                        outText = driver.FindElementByCssSelector("body > div.frame > div.page.tlid-homepage.homepage.translate-text > div.homepage-content-wrap > div.tlid-source-target.main-header > div.source-target-row > div.tlid-results-container.results-container > div.tlid-result.result-dict-wrapper > div.result.tlid-copy-target > div.text-wrap.tlid-copy-target > div > span.tlid-translation.translation > span");
-                        if (outText.Text.Split(' ').Length > 5)
-                            lpOut.value = Thread.CurrentThread.CurrentCulture.TextInfo.ToTitleCase(outText.Text.ToLower());
-                        else
-                            lpOut.value = outText.Text;
+                        inText.Click();
+                        clearContents.Perform();
+                        inText.SendKeys(lp.value);
+                        Thread.Sleep(translatetimeout);
+                        lpOut.key = lp.key;
+                        lpOut.value = lp.value;
+                        lpOut.voice = lp.voice;
+                        try
+                        {
+                            //This element goes stale when new text is written
+                            outText = driver.FindElementByCssSelector("body > div.frame > div.page.tlid-homepage.homepage.translate-text > div.homepage-content-wrap > div.tlid-source-target.main-header > div.source-target-row > div.tlid-results-container.results-container > div.tlid-result.result-dict-wrapper > div.result.tlid-copy-target > div.text-wrap.tlid-copy-target > div > span.tlid-translation.translation > span");
+                            if (outText.Text.Split(' ').Length > 5)
+                                lpOut.value = Thread.CurrentThread.CurrentCulture.TextInfo.ToTitleCase(outText.Text.ToLower());
+                            else
+                                lpOut.value = outText.Text;
+                        }
+                        catch
+                        {
+                            //If this fails, go with the original text
+                        }
                     }
-                    catch
+                    else
                     {
-                        //If this fails, go with the original text
+                        lpOut.key = lp.key;
+                        lpOut.value = lp.value;
+                        lpOut.voice = lp.voice;
                     }
-                    Console.WriteLine("{0} -> {1}", lp.value, lpOut.value);
+                    Console.WriteLine(DateTime.Now.ToLongTimeString() + ": " + lpOut.value);
                     destLang.strings.Add(lpOut);
 
-                    if (lp.voice)
+                    if (lp.voice && deltas[lp.key] != LanguageDelta.None)
                         await GetSpeech(language, lang_code, lpOut.key, lpOut.value);
                 }
 
@@ -233,7 +294,9 @@ namespace Translator
 
             using (var driver = new ChromeDriver())
             {
-                var url = "https://www.bing.com/translator?ref=TThis&&text=&from=en&to=" + lang_code;
+                //MS Translate doesn't understand en-US
+                var lcode = (lang_code == "en-US" ? "en" : lang_code);
+                var url = "https://www.bing.com/translator?ref=TThis&&text=&from=en&to=" + lcode;
                 driver.Navigate().GoToUrl(url);
                 var builder = new Actions(driver);
                 var clearContents = builder.KeyDown(Keys.Control)
@@ -256,26 +319,35 @@ namespace Translator
                 foreach (var lp in lps) {
                     if (i % 10 == 0)
                     {
-                        var ret = await UpdateAccessCode((i / 10) % 2 == 0);
+                        var ret = await UpdateAccessCode(i / 10);
                         if (!ret) return;
                         i++;
                     }
 
-                    inText.Click();
-                    clearContents.Perform();
-                    inText.SendKeys(lp.value);
-                    Thread.Sleep(translatetimeout);
                     var lpOut = new LanguageData();
-                    lpOut.key = lp.key;
-                    lpOut.voice = lp.voice;
-                    if (outText.GetAttribute("value").Split(' ').Length < 5)
-                        lpOut.value = Thread.CurrentThread.CurrentCulture.TextInfo.ToTitleCase(outText.GetAttribute("value").ToLower());
+                    if (deltas[lp.key] == LanguageDelta.NewValue || deltas[lp.key] == LanguageDelta.NewItem)
+                    {
+                        inText.Click();
+                        clearContents.Perform();
+                        inText.SendKeys(lp.value);
+                        Thread.Sleep(translatetimeout);
+                        lpOut.key = lp.key;
+                        lpOut.voice = lp.voice;
+                        if (outText.GetAttribute("value").Split(' ').Length < 5)
+                            lpOut.value = Thread.CurrentThread.CurrentCulture.TextInfo.ToTitleCase(outText.GetAttribute("value").ToLower());
+                        else
+                            lpOut.value = outText.GetAttribute("value");
+                    }
                     else
-                        lpOut.value = outText.GetAttribute("value");
+                    {
+                        lpOut.key = lp.key;
+                        lpOut.voice = lp.voice;
+                        lpOut.value = lp.value;
+                    }
                     destLang.strings.Add(lpOut);
                     Console.WriteLine(DateTime.Now.ToLongTimeString() + ": " + lpOut.value);
 
-                    if (lp.voice)
+                    if (lp.voice && deltas[lp.key] != LanguageDelta.None)
                         await GetSpeech(language, lang_code, lpOut.key, lpOut.value);
                 }
 
@@ -290,7 +362,7 @@ namespace Translator
 
             var host = "https://westus.tts.speech.microsoft.com/cognitiveservices/v1";
             var body = @"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='" + lang_code + "'> " +
-              "<voice name='" + voices[lang_code] + "'>" + text + "</voice></speak>";
+              "<voice name='" + voices[language].Value + "'>" + text + "</voice></speak>";
 
             int retry = 3;
             while (retry > 0) {
@@ -336,6 +408,8 @@ namespace Translator
                                 return false;
                             else
                             {
+                                await UpdateAccessCode(Rand.Next(1000));
+
                                 //Try sleeping for a longer time
                                 Thread.Sleep(20000 * (4-retry));
                                 retry--;
